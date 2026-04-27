@@ -75,12 +75,6 @@ In a second terminal on the Pi:
 npm run display
 ```
 
-If your Pi hostname is not `raspberrypi.local`, pass the URL explicitly:
-
-```bash
-node src/run-matrix.mjs --pi-url http://127.0.0.1:3000
-```
-
 ## What the joystick does
 
 - up/down/left/right: move the white selection square

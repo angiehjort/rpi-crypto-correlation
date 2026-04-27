@@ -22,7 +22,7 @@ async function sleep(milliseconds) {
 }
 
 async function main() {
-  const piUrl = readOption("--pi-url", process.env.PI_URL ?? "http://raspberrypi.local:3000");
+  const piUrl = readOption("--pi-url", process.env.PI_URL ?? "http://127.0.0.1:3000");
   const granularity = Number(readOption("--granularity", process.env.GRANULARITY ?? 3600));
   const refreshMinutes = Number(readOption("--refresh-minutes", process.env.REFRESH_MINUTES ?? 15));
   const pollMilliseconds = Number(readOption("--poll-ms", process.env.POLL_MS ?? 120));
