@@ -1,11 +1,20 @@
 import {
   DEFAULT_PRODUCTS,
+  WEEK_GRANULARITY,
   buildSelectionLabel,
   computeCorrelationMatrix,
   matrixToConsoleTable,
   matrixToPixels
 } from "./cryptoMatrix.js";
 import { getJoystickEvent, postPixels, showMessage } from "./piClient.js";
+
+const GRANULARITY_MODES = [
+  { granularity: 3600, label: "1 hour" },
+  { granularity: 86400, label: "1 day" },
+  { granularity: WEEK_GRANULARITY, label: "1 week" }
+];
+
+const LONG_PRESS_MS = 800;
 
 function readFlag(name) {
   return process.argv.includes(name);
@@ -23,21 +32,30 @@ async function sleep(milliseconds) {
 
 async function main() {
   const piUrl = readOption("--pi-url", process.env.PI_URL ?? "http://127.0.0.1:3000");
-  const granularity = Number(readOption("--granularity", process.env.GRANULARITY ?? 3600));
+  const granularityArg = readOption("--granularity", process.env.GRANULARITY ?? null);
   const refreshMinutes = Number(readOption("--refresh-minutes", process.env.REFRESH_MINUTES ?? 15));
   const pollMilliseconds = Number(readOption("--poll-ms", process.env.POLL_MS ?? 120));
   const simulate = readFlag("--simulate");
   const once = readFlag("--once");
 
+  let modeIndex = 0;
+  if (granularityArg !== null) {
+    const found = GRANULARITY_MODES.findIndex((m) => String(m.granularity) === granularityArg);
+    if (found !== -1) modeIndex = found;
+  }
+  let currentMode = GRANULARITY_MODES[modeIndex];
+
   let matrix = await computeCorrelationMatrix({
     products: DEFAULT_PRODUCTS,
-    granularity
+    granularity: currentMode.granularity
   });
 
   let selectedIndex = 0;
   let nextRefreshAt = Date.now() + refreshMinutes * 60_000;
+  let middlePressedAt = null;
 
   console.table(matrixToConsoleTable(matrix));
+  console.log(`Interval: ${currentMode.label}`);
 
   if (simulate) {
     console.log("Simulation mode enabled. No pixels will be sent to a Raspberry Pi.");
@@ -54,11 +72,11 @@ async function main() {
     if (Date.now() >= nextRefreshAt) {
       matrix = await computeCorrelationMatrix({
         products: DEFAULT_PRODUCTS,
-        granularity
+        granularity: currentMode.granularity
       });
       nextRefreshAt = Date.now() + refreshMinutes * 60_000;
 
-      console.log(`Refreshed matrix at ${new Date().toISOString()}`);
+      console.log(`Refreshed matrix at ${new Date().toISOString()} (${currentMode.label})`);
       console.table(matrixToConsoleTable(matrix));
 
       if (!simulate) {
@@ -68,21 +86,38 @@ async function main() {
 
     if (!simulate) {
       const event = await getJoystickEvent(piUrl);
-      if (event?.action === "released") {
-        await sleep(pollMilliseconds);
-        continue;
-      }
-
-      const row = Math.floor(selectedIndex / 8);
-      const column = selectedIndex % 8;
-
-      if (event?.direction === "up" && row > 0) selectedIndex -= 8;
-      if (event?.direction === "down" && row < 7) selectedIndex += 8;
-      if (event?.direction === "left" && column > 0) selectedIndex -= 1;
-      if (event?.direction === "right" && column < 7) selectedIndex += 1;
 
       if (event?.direction === "middle") {
-        await showMessage(piUrl, buildSelectionLabel(matrix, selectedIndex));
+        if (event.action === "pressed") {
+          middlePressedAt = Date.now();
+        } else if (event.action === "released" && middlePressedAt !== null) {
+          const elapsed = Date.now() - middlePressedAt;
+          middlePressedAt = null;
+
+          if (elapsed >= LONG_PRESS_MS) {
+            modeIndex = (modeIndex + 1) % GRANULARITY_MODES.length;
+            currentMode = GRANULARITY_MODES[modeIndex];
+            console.log(`Switched to interval: ${currentMode.label}`);
+            await showMessage(piUrl, currentMode.label);
+            matrix = await computeCorrelationMatrix({
+              products: DEFAULT_PRODUCTS,
+              granularity: currentMode.granularity
+            });
+            nextRefreshAt = Date.now() + refreshMinutes * 60_000;
+            console.table(matrixToConsoleTable(matrix));
+          } else {
+            await showMessage(piUrl, buildSelectionLabel(matrix, selectedIndex));
+          }
+        }
+        // ignore "held" events for middle button
+      } else if (event && event.action !== "released") {
+        const row = Math.floor(selectedIndex / 8);
+        const column = selectedIndex % 8;
+
+        if (event.direction === "up" && row > 0) selectedIndex -= 8;
+        if (event.direction === "down" && row < 7) selectedIndex += 8;
+        if (event.direction === "left" && column > 0) selectedIndex -= 1;
+        if (event.direction === "right" && column < 7) selectedIndex += 1;
       }
 
       await postPixels(piUrl, matrixToPixels(matrix, selectedIndex));
